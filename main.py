@@ -167,6 +167,11 @@ class PDFViewer(QMainWindow):
         # self.text_blocks_table.setSortingEnabled(True)
 
         # Buttons
+        self.add_row_button = QPushButton("Lisää rivi")
+        self.add_row_button.clicked.connect(self.add_row_to_table)
+        self.add_row_button.setMaximumWidth(300)
+        self.right_layout.addWidget(self.add_row_button)
+
         self.instruction_button = QPushButton("Ohjeet")
         self.instruction_button.clicked.connect(self.instruction_block)
         self.instruction_button.setMaximumWidth(300)
@@ -198,11 +203,14 @@ class PDFViewer(QMainWindow):
         self.selection_rect = None
         self.dragged_circle = None  # Track the dragged circle
         self.measurement_number = [0]
+        self.measurement_text = [0]
         self.radius = 12
         self.save_path = ""
 
         # Install event filter for graphics view
         self.graphics_view.viewport().installEventFilter(self)
+
+
 
 
     def insert_character(self, char):
@@ -231,15 +239,18 @@ class PDFViewer(QMainWindow):
                 pen.setWidth(1)
                 circle_item.setPen(pen)
 
-        block_index = int(self.text_blocks_table.item(row, 1).text())
+        if not self.text_blocks_table.item(row, 1).text().endswith("K"):
+            block_index = int(self.text_blocks_table.item(row, 1).text())
 
-        for rect_item, circle_item, line_item, text_item in self.highlights[self.current_page]:
-            if circle_item.data(0) == block_index:
-                pen = circle_item.pen()
-                pen.setColor(Qt.green)
-                pen.setWidth(4)
-                circle_item.setPen(pen)
-                break
+            for rect_item, circle_item, line_item, text_item in self.highlights[self.current_page]:
+                if circle_item.data(0) == block_index:
+                    pen = circle_item.pen()
+                    pen.setColor(Qt.green)
+                    pen.setWidth(4)
+                    circle_item.setPen(pen)
+                    break
+
+
 
     def open_pdf(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Open PDF File", "", "PDF Files (*.pdf)")
@@ -326,48 +337,50 @@ class PDFViewer(QMainWindow):
         self.highlights[self.current_page].clear()
 
         for block in self.blocks_data[self.current_page]:
-            if block["page"] == self.current_page:
-                x0, y0, x1, y1 = block["rect"]
+            if block["index"] != None:
+                if block["page"] == self.current_page:
+                    x0, y0, x1, y1 = block["rect"]
 
-                # Draw rectangle around the block
-                rect_item = QGraphicsRectItem(x0, y0, x1 - x0, y1 - y0)
-                rect_item.setPen(Qt.blue)
-                self.graphics_scene.addItem(rect_item)
+                    # Draw rectangle around the block
+                    rect_item = QGraphicsRectItem(x0, y0, x1 - x0, y1 - y0)
+                    rect_item.setPen(Qt.blue)
+                    self.graphics_scene.addItem(rect_item)
 
-                # Use saved circle position if available
-                if block["circle_position"]:
-                    circle_x, circle_y = block["circle_position"]
-                else:
-                    circle_x, circle_y = x1 + 20, y0 - 10
+                    # Use saved circle position if available
+                    if block["circle_position"]:
+                        circle_x, circle_y = block["circle_position"]
+                    else:
+                        circle_x, circle_y = x1 + 20, y0 - 10
 
-                # Draw circle with index
-                circle_radius = self.radius
-                circle_item = QGraphicsEllipseItem(
-                    circle_x - circle_radius, circle_y - circle_radius,
-                    circle_radius * 2, circle_radius * 2
-                )
-                circle_item.setPen(Qt.red)
-                self.graphics_scene.addItem(circle_item)
+                    # Draw circle with index
+                    circle_radius = self.radius
+                    circle_item = QGraphicsEllipseItem(
+                        circle_x - circle_radius, circle_y - circle_radius,
+                        circle_radius * 2, circle_radius * 2
+                    )
+                    circle_item.setPen(Qt.red)
+                    self.graphics_scene.addItem(circle_item)
 
-                # Draw line connecting rectangle and circle
-                new_lx, new_ly = self.shorten_line_to_circle(circle_x, circle_y, x1 , y0, circle_radius)
+                    # Draw line connecting rectangle and circle
+                    new_lx, new_ly = self.shorten_line_to_circle(circle_x, circle_y, x1, y0, circle_radius)
 
-                line_item = QGraphicsLineItem(x1, y0, new_lx, new_ly)
-                line_item.setPen(Qt.blue)
-                self.graphics_scene.addItem(line_item)
+                    line_item = QGraphicsLineItem(x1, y0, new_lx, new_ly)
+                    line_item.setPen(Qt.blue)
+                    self.graphics_scene.addItem(line_item)
 
-                # Add text inside the circle
-                text_item = self.graphics_scene.addText(str(block["index"]))
-                text_item.setDefaultTextColor(Qt.red)
-                text_item.setFont(QFont("Arial", 10))
-                text_item.setPos(circle_x - 7, circle_y - 12)
+                    # Add text inside the circle
+                    text_item = self.graphics_scene.addText(str(block["index"]))
+                    text_item.setDefaultTextColor(Qt.red)
+                    text_item.setFont(QFont("Arial", 10))
+                    text_item.setPos(circle_x - 7, circle_y - 12)
 
-                # Enable moving the circle
-                circle_item.setFlag(QGraphicsEllipseItem.ItemIsMovable, True)
-                circle_item.setFlag(QGraphicsEllipseItem.ItemSendsGeometryChanges, True)
-                circle_item.setData(0, block["index"])  # Store the index for reference
+                    # Enable moving the circle
+                    circle_item.setFlag(QGraphicsEllipseItem.ItemIsMovable, True)
+                    circle_item.setFlag(QGraphicsEllipseItem.ItemSendsGeometryChanges, True)
+                    circle_item.setData(0, block["index"])  # Store the index for reference
 
-                self.highlights[self.current_page].append((rect_item, circle_item, line_item, text_item))
+                    self.highlights[self.current_page].append((rect_item, circle_item, line_item, text_item))
+
 
     def prev_page(self):
         if self.current_page > 0:
@@ -549,44 +562,72 @@ class PDFViewer(QMainWindow):
         self.text_blocks_table.setRowCount(0)
         for page_number, page_blocks in enumerate(self.blocks_data):
             for block in page_blocks:
-                row_position = self.text_blocks_table.rowCount()
-                self.text_blocks_table.insertRow(row_position)
+                if block["index"] is not None:
+                    row_position = self.text_blocks_table.rowCount()
+                    self.text_blocks_table.insertRow(row_position)
 
-                page_item = QTableWidgetItem(str(page_number + 1))
-                page_item.setFont(QFont("Arial", weight=QFont.Bold))
-                page_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
-                self.text_blocks_table.setItem(row_position, 0, page_item)
+                    page_item = QTableWidgetItem(str(page_number + 1))
+                    page_item.setFont(QFont("Arial", weight=QFont.Bold))
+                    page_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+                    self.text_blocks_table.setItem(row_position, 0, page_item)
 
-                index_item = QTableWidgetItem(str(block['index']))
-                index_item.setFont(QFont("Arial", weight=QFont.Bold))
-                index_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
-                self.text_blocks_table.setItem(row_position, 1, index_item)
+                    index_item = QTableWidgetItem(str(block['index']))
+                    index_item.setFont(QFont("Arial", weight=QFont.Bold))
+                    index_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+                    self.text_blocks_table.setItem(row_position, 1, index_item)
 
-                text_item = QTableWidgetItem(block['text'])
-                self.text_blocks_table.setItem(row_position, 2, text_item)
+                    text_item = QTableWidgetItem(block['text'])
+                    self.text_blocks_table.setItem(row_position, 2, text_item)
+                else:
+                    row_position = self.text_blocks_table.rowCount()
+                    self.text_blocks_table.insertRow(row_position)
+
+                    page_item = QTableWidgetItem(str(page_number + 1))
+                    page_item.setFont(QFont("Arial", weight=QFont.Bold))
+                    page_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+                    self.text_blocks_table.setItem(row_position, 0, page_item)
+
+                    index_item = QTableWidgetItem(str(block['text_index']))
+                    index_item.setFont(QFont("Arial", weight=QFont.Bold))
+                    #index_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+                    self.text_blocks_table.setItem(row_position, 1, index_item)
+
+                    text_item = QTableWidgetItem(block['text'])
+                    self.text_blocks_table.setItem(row_position, 2, text_item)
+
 
 
     def delete_block(self):
         current_row = self.text_blocks_table.currentRow()
         if current_row >= 0:
             page_number = int(self.text_blocks_table.item(current_row, 0).text()) - 1
-            block_index = int(self.text_blocks_table.item(current_row, 1).text())
+            if not self.text_blocks_table.item(current_row, 1).text().endswith("K"):
+                block_index = int(self.text_blocks_table.item(current_row, 1).text())
+            else:
+                block_index = self.text_blocks_table.item(current_row, 1).text()
 
             # print(self.blocks_data)
 
             if page_number >= 0 and page_number < len(self.blocks_data):
-                block = next((obj for page in self.blocks_data for obj in page if obj["index"] == block_index))
+                block = next(
+                    (obj for page in self.blocks_data for obj in page
+                     if obj["index"] == block_index or (
+                             obj.get("text_index") is not None and obj["text_index"] == block_index)),
+                    None
+                )
 
                 if block in self.blocks_data[page_number]:
                     self.blocks_data[page_number].remove(block)
 
                 for i, block in enumerate(self.blocks_data[page_number], start=self.blocks_data[page_number][0]["index"]):
-                    block["index"] = i
+                    if block["index"] is not None:
+                        block["index"] = i
 
                 self.measurement_number = [0]
                 for page_blocks in self.blocks_data:
                     for block in page_blocks:
-                        block["index"] = self.measurement_number_calc()
+                        if block["index"] is not None:
+                            block["index"] = self.measurement_number_calc()
 
                 self.update_blocks_table()
                 if page_number == self.current_page:
@@ -666,45 +707,48 @@ class PDFViewer(QMainWindow):
             pixmap = page.get_pixmap()
             new_page.insert_image(page.rect, pixmap=pixmap)
 
-
             for block in page_blocks:
-                # draw rect
-                rect = block["rect"]
-                new_page.draw_rect(
-                    fitz.Rect(rect[0], rect[1], rect[2], rect[3]),
-                    color=(0, 0, 1),  # blue
-                    width=1,
-                )
+                if block["index"] is not None:
+                    # draw rect
+                    rect = block["rect"]
+                    new_page.draw_rect(
+                        fitz.Rect(rect[0], rect[1], rect[2], rect[3]),
+                        color=(0, 0, 1),  # blue
+                        width=1,
+                    )
 
-                if block["circle_position"]:
-                    circle_x, circle_y = block["circle_position"]
-                else:
-                    circle_x, circle_y = rect[2] + 20, rect[1] - 10
+                    if block["circle_position"]:
+                        circle_x, circle_y = block["circle_position"]
+                    else:
+                        circle_x, circle_y = rect[2] + 20, rect[1] - 10
 
-                # draw line
-                new_page.draw_line(
-                    p1=(rect[2], rect[1]),
-                    p2=(self.shorten_line_to_circle(rect[2], rect[1], circle_x, circle_y, self.radius)),
-                    color=(0, 0, 1), # blue
-                    width=1,
-                )
+                    # draw line
+                    new_page.draw_line(
+                        p1=(rect[2], rect[1]),
+                        p2=(self.shorten_line_to_circle(rect[2], rect[1], circle_x, circle_y, self.radius)),
+                        color=(0, 0, 1),  # blue
+                        width=1,
+                    )
 
-                # draw circle
-                new_page.draw_circle(
-                    center=(circle_x, circle_y),
-                    radius=self.radius,
-                    color=(1, 0, 0),  # red
-                    width=1
-                )
+                    # draw circle
+                    new_page.draw_circle(
+                        center=(circle_x, circle_y),
+                        radius=self.radius,
+                        color=(1, 0, 0),  # red
+                        width=1
+                    )
 
-                # draw number inside the circle
-                new_page.insert_text(
-                    (circle_x - 5, circle_y + 4),
-                    str(block["index"]),
-                    fontsize = 13,
-                    color=(1, 0, 0),  # red
-                    fontname="helv"
-                )
+                    # draw number inside the circle
+                    new_page.insert_text(
+                        (circle_x - 5, circle_y + 4),
+                        str(block["index"]),
+                        fontsize=13,
+                        color=(1, 0, 0),  # red
+                        fontname="helv"
+                    )
+
+
+
 
         # Save new PDF
         try:
@@ -719,13 +763,13 @@ class PDFViewer(QMainWindow):
 
         sheet = workbook[sheet_name]
 
-        # Перебираем строки в указанном столбце
+        # Iterate through the rows in the specified column
         for row in sheet.iter_rows(min_col=column_index, max_col=column_index, values_only=True):
             if row[0] == search_text:
-                # Если нашли текст, возвращаем номер строки
+                # If we find the text, we return the line number
                 for cell in sheet.iter_rows(min_col=column_index, max_col=column_index):
                     if cell[0].value == search_text:
-                        return cell[0].row  # Возвращаем номер строки
+                        return cell[0].row  # Return the line number
 
         return None
 
@@ -765,7 +809,7 @@ class PDFViewer(QMainWindow):
 
 
         try:
-            # Инициализируем Excel
+            # Initialize Excel
             excel = win32.Dispatch("Excel.Application")
             excel.Visible = False
         except Exception as e:
@@ -817,7 +861,7 @@ class PDFViewer(QMainWindow):
             workbook.Save()
             workbook.Close()
             excel.Quit()
-            print("Удачно")
+            print("Successfully")
         except Exception as e:
             workbook.Close()
             excel.Quit()
@@ -827,11 +871,11 @@ class PDFViewer(QMainWindow):
 
     def copy_data_within_excel(self, file_path, source_range, target_start_cell, table_height):
         try:
-            # Инициализируем Excel
+            # Initialize Excel
             excel = win32.Dispatch("Excel.Application")
             excel.Visible = False
 
-            # Открываем файл
+            # Open the file
             workbook = excel.Workbooks.Open(file_path)
             sheet = workbook.ActiveSheet
 
@@ -843,24 +887,23 @@ class PDFViewer(QMainWindow):
 
                 sheet.Rows(row_number + table_height).RowHeight = height
 
-            # Копируем диапазон
+            # Copy the range
             source_range_object = sheet.Range(source_range)
             source_range_object.Copy()
 
-            # Вставляем на целевой диапазон
+            # Insert into the target range
             target_cell = sheet.Range(target_start_cell)
             target_cell.Select()
             sheet.Paste()
 
-            # Сохраняем и закрываем файл
+            # Save and close the file
             workbook.Save()
             workbook.Close()
             excel.Quit()
 
-            print(f"Данные с форматированием и изображениями успешно скопированы в файл {file_path}")
 
         except Exception as e:
-            print(f"Ошибка при копировании данных: {e}")
+            print(f"Error copying data: {e}")
 
     def instruction_block(self):
         self.instruction_window = Instructions()
@@ -871,11 +914,16 @@ class PDFViewer(QMainWindow):
         if column == 2:
             try:
                 page_number = int(self.text_blocks_table.item(row, 0).text()) - 1
-                block_index = int(self.text_blocks_table.item(row, 1).text())
+                if not self.text_blocks_table.item(row, 1).text().endswith("K"):
+                    block_index = int(self.text_blocks_table.item(row, 1).text())
+                else:
+                    block_index = self.text_blocks_table.item(row, 1).text()
                 new_text = self.text_blocks_table.item(row, 2).text()
 
                 block = next(
-                    (obj for page in self.blocks_data for obj in page if obj["index"] == block_index),
+                    (obj for page in self.blocks_data for obj in page
+                     if obj["index"] == block_index or (
+                                 obj.get("text_index") is not None and obj["text_index"] == block_index)),
                     None
                 )
                 if block and block["page"] == page_number:
@@ -883,6 +931,48 @@ class PDFViewer(QMainWindow):
 
             except Exception as e:
                 print(f"Error updating block text: {e}")
+
+    def add_row_to_table(self):
+        # Получить выбранную строку
+        current_row = self.text_blocks_table.currentRow()
+
+        # Если ничего не выбрано, добавляем строку в конец
+        if current_row == -1:
+            current_row = self.text_blocks_table.rowCount() - 1
+
+        # Вставляем новую строку после выбранной
+        new_row_position = current_row + 1
+        self.text_blocks_table.insertRow(new_row_position)
+
+        # Заполнить столбцы страницы, индекса и текста
+        page_item = QTableWidgetItem(str(self.current_page + 1))  # Или задайте значение по умолчанию
+        page_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+        self.text_blocks_table.setItem(new_row_position, 0, page_item)
+
+        index_item = QTableWidgetItem(str(self.measurement_text_calc()) + "K")
+        index_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+        self.text_blocks_table.setItem(new_row_position, 1, index_item)
+
+        text_item = QTableWidgetItem("")
+        self.text_blocks_table.setItem(new_row_position, 2, text_item)
+
+        pituus = 0
+        for i in range(len(self.blocks_data)):
+            pituus += len(self.blocks_data[i])
+
+        # Обновить данные blocks_data
+        self.blocks_data[self.current_page].insert(new_row_position - pituus, {
+            "page": self.current_page,
+            "rect": None,
+            "text": "",
+            "index": None,
+            "circle_position": None,
+            "text_index": index_item.text()
+        })
+
+    def measurement_text_calc(self):
+        self.measurement_text.append(self.measurement_text[-1]+1)
+        return self.measurement_text[-1]
 
 
 if __name__ == "__main__":
