@@ -11,7 +11,7 @@ import fitz
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QLabel, QVBoxLayout, QPushButton, QWidget,
     QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsEllipseItem, QGraphicsLineItem,
-    QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, QDialog, QSizePolicy, QProgressBar
+    QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, QDialog, QSizePolicy, QProgressBar, QLineEdit
 )
 from PyQt5.QtGui import QPixmap, QImage, QFont
 from PyQt5.QtCore import Qt, QRectF, QEvent
@@ -36,6 +36,63 @@ class Instructions(QDialog):
         self.ok_button = QPushButton("Ok")
         self.ok_button.clicked.connect(self.accept)
         self.layout.addWidget(self.ok_button)
+
+class PrintDialog(QDialog):
+    def __init__(self, parent=None, default_path=""):
+        super().__init__()
+        self.setWindowTitle("Print documents")
+        self.setModal(True)  # Locks the main window
+        self.setGeometry(400, 200, 500, 150)
+
+        self.excel_malli_path = default_path
+
+        # Layuot
+        self.layout = QVBoxLayout()
+        self.setLayout(self.layout)
+
+        # Label
+        self.label = QLabel("Excel malli:")
+        self.layout.addWidget(self.label)
+
+        self.path_field = QLineEdit()
+        self.path_field.setPlaceholderText(f"{self.excel_malli_path}")
+        if self.excel_malli_path:  # Если задан путь по умолчанию, отображаем его
+            self.path_field.setText(self.excel_malli_path)
+        self.layout.addWidget(self.path_field)
+
+        # Кнопка выбора пути
+        self.browse_button = QPushButton("Valitse malli")
+        self.browse_button.clicked.connect(self.browse_file)
+        self.layout.addWidget(self.browse_button)
+
+        # Кнопка подтверждения
+        self.ok_button = QPushButton("Ok")
+        self.ok_button.clicked.connect(self.accept)
+        self.layout.addWidget(self.ok_button)
+
+        # Кнопка отмены
+        self.cancel_button = QPushButton("Peruuta")
+        self.cancel_button.clicked.connect(self.reject)
+        self.layout.addWidget(self.cancel_button)
+
+    def browse_file(self):
+        # Открытие диалога выбора файла
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Valotse Excel malli",
+            "",
+            "Excel Files (*.xls *.xlsx)"
+        )
+        if file_path:
+            self.path_field.setText(file_path)
+            self.excel_malli_path = file_path
+
+    def get_excel_path(self):
+        return self.excel_malli_path
+
+
+
+
 
 class ProgressWindow(QDialog):
     def __init__(self, parent=None):
@@ -657,6 +714,14 @@ class PDFViewer(QMainWindow):
         self.measurement_number = [0]
 
     def print_documents_block(self):
+        excel_default_path = "T:\\Yhteiset\\LAATU\\Mittapöytäkirjapohjat\\MPK_POHJA_PYSTY_2022.xlsx"
+        dialog = PrintDialog(default_path=excel_default_path)
+        if dialog.exec_() == QDialog.Accepted:
+            excel_path = dialog.get_excel_path()
+            print(f"Выбранный путь: {excel_path}")
+        else:
+            print("Выбор отменен")
+
         self.progress_window = ProgressWindow(self)
         self.progress_window.show()
 
@@ -680,7 +745,7 @@ class PDFViewer(QMainWindow):
             self.print_pdf()
 
             self.progress_window.update_progress(40, "Saving Excel...")
-            self.print_excel(excel_save_path)
+            self.print_excel(excel_save_path, excel_path)
 
             self.progress_window.update_progress(100, "Finished")
             self.progress_window.set_compledet()
@@ -748,8 +813,6 @@ class PDFViewer(QMainWindow):
                     )
 
 
-
-
         # Save new PDF
         try:
             pdf_copy.save(self.save_path)
@@ -774,9 +837,12 @@ class PDFViewer(QMainWindow):
         return None
 
 
-    def print_excel(self, excel_save_path):
-        path_to_copy = os.path.join(os.getcwd(), "Mittapöytäkirja malli")
-        file_to_copy = os.path.join(path_to_copy, "MPK_POHJA_PYSTY_2022.xlsx")
+    def print_excel(self, excel_save_path, excel_malli):
+
+
+        #path_to_copy = os.path.join(os.getcwd(), "Mittapöytäkirja malli")
+        #file_to_copy = os.path.join(path_to_copy, "MPK_POHJA_PYSTY_2022.xlsx")
+        file_to_copy = excel_malli
 
         if not os.path.exists(file_to_copy):
             print(f"Sample file not found: {file_to_copy}")
