@@ -718,9 +718,8 @@ class PDFViewer(QMainWindow):
         dialog = PrintDialog(default_path=excel_default_path)
         if dialog.exec_() == QDialog.Accepted:
             excel_path = dialog.get_excel_path()
-            print(f"Выбранный путь: {excel_path}")
-        else:
-            print("Выбор отменен")
+
+
 
         self.progress_window = ProgressWindow(self)
         self.progress_window.show()
@@ -728,7 +727,7 @@ class PDFViewer(QMainWindow):
         try:
             # PDF Save Dialog
             self.save_path, _ = QFileDialog.getSaveFileName(
-                self, "Save Highlighted PDF", self.pdf_document_name + "M", "PDF Files (*.pdf)"
+                self, "Save Highlighted PDF", self.pdf_document_name + "N", "PDF Files (*.pdf)"
             )
             if not self.save_path:
                 self.progress_window.close()
@@ -736,9 +735,13 @@ class PDFViewer(QMainWindow):
 
             # Extract directory path
             save_dir = os.path.dirname(self.save_path)
+            new_file_name = os.path.splitext(os.path.basename(self.save_path))[0][:-1]
 
             # Path for Excel
-            excel_save_path = os.path.join(save_dir, self.pdf_document_name + "M.xlsx")
+            excel_save_path = os.path.join(save_dir, new_file_name + "M.xlsx")
+            pdf_m_save_path = os.path.join(save_dir, new_file_name + "M.pdf")
+            print("excel_path: " + excel_save_path)
+            print("pdf_path: " + pdf_m_save_path)
 
             self.progress_window.update_progress(20, "Saving PDF...")
 
@@ -746,6 +749,7 @@ class PDFViewer(QMainWindow):
 
             self.progress_window.update_progress(40, "Saving Excel...")
             self.print_excel(excel_save_path, excel_path)
+            self.print_excel_to_pdf(excel_save_path, pdf_m_save_path)
 
             self.progress_window.update_progress(100, "Finished")
             self.progress_window.set_compledet()
@@ -782,7 +786,7 @@ class PDFViewer(QMainWindow):
                         width=1,
                     )
 
-                    if block["circle_position"]:
+                    if block["circle_position"] is not None:
                         circle_x, circle_y = block["circle_position"]
                     else:
                         circle_x, circle_y = rect[2] + 20, rect[1] - 10
@@ -839,9 +843,6 @@ class PDFViewer(QMainWindow):
 
     def print_excel(self, excel_save_path, excel_malli):
 
-
-        #path_to_copy = os.path.join(os.getcwd(), "Mittapöytäkirja malli")
-        #file_to_copy = os.path.join(path_to_copy, "MPK_POHJA_PYSTY_2022.xlsx")
         file_to_copy = excel_malli
 
         if not os.path.exists(file_to_copy):
@@ -1039,6 +1040,50 @@ class PDFViewer(QMainWindow):
     def measurement_text_calc(self):
         self.measurement_text.append(self.measurement_text[-1]+1)
         return self.measurement_text[-1]
+
+    def print_excel_to_pdf(self, excel_workbook_path, pdf_save_path):
+
+        try:
+            if os.path.exists(pdf_save_path):
+                os.remove(pdf_save_path)
+
+            print("Path: " + pdf_save_path)
+
+            excel = win32.Dispatch("Excel.Application")
+            excel.Visible = False
+
+            workbook = excel.Workbooks.Open(excel_workbook_path)
+            # Устанавливаем активный лист (если это нужно)
+            active_sheet = workbook.ActiveSheet
+
+            active_sheet.ResetAllPageBreaks()
+
+            # Устанавливаем разрывы страниц каждые 64 строки
+            row_count = active_sheet.UsedRange.Rows.Count
+            for i in range(65, row_count + 1, 64):  # Начинаем с 65-й строки
+                active_sheet.HPageBreaks.Add(active_sheet.Rows(i))
+
+            # Устанавливаем параметры печати
+            active_sheet.PageSetup.PrintArea = ""  # Печать всего листа
+            active_sheet.PageSetup.FitToPagesWide = 1
+            active_sheet.PageSetup.FitToPagesTall = False  # Не сжимать по высоте
+
+            # Экспорт в PDF
+            active_sheet.ExportAsFixedFormat(
+                Type=0,  # 0 = PDF
+                Filename=pdf_save_path,
+                Quality=0,  # Стандартное качество
+                IncludeDocProperties=True,
+                IgnorePrintAreas=False,
+                OpenAfterPublish=False
+            )
+            print(f"PDF сохранен по пути: {pdf_save_path}")
+            workbook.Close(SaveChanges=False)
+            excel.Quit()
+        except Exception as e:
+            print(f"Ошибка при сохранении Excel в PDF: {e}")
+            workbook.Close(SaveChanges=False)
+            excel.Quit()
 
 
 if __name__ == "__main__":
