@@ -2,6 +2,7 @@ import shutil
 import sys
 import os
 import math
+import traceback
 
 import openpyxl
 from openpyxl import load_workbook
@@ -11,10 +12,12 @@ import fitz
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QLabel, QVBoxLayout, QPushButton, QWidget,
     QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsEllipseItem, QGraphicsLineItem,
-    QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, QDialog, QSizePolicy, QProgressBar, QLineEdit
+    QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, QDialog, QSizePolicy, QProgressBar, QLineEdit,
+    QGraphicsItem, QCheckBox
 )
 from PyQt5.QtGui import QPixmap, QImage, QFont
-from PyQt5.QtCore import Qt, QRectF, QEvent
+from PyQt5.QtCore import Qt, QRectF, QEvent, QPointF
+
 
 class Instructions(QDialog):
     def __init__(self):
@@ -79,7 +82,7 @@ class PrintDialog(QDialog):
         # Открытие диалога выбора файла
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Valotse Excel malli",
+            "Valitse Excel malli",
             "",
             "Excel Files (*.xls *.xlsx)"
         )
@@ -90,7 +93,55 @@ class PrintDialog(QDialog):
     def get_excel_path(self):
         return self.excel_malli_path
 
+# изменение размера прямоугольника
+class ResizableHandle(QGraphicsRectItem):
+    def __init__(self, parent_rect, position_flag, viewer, size=6):
+        super().__init__(-size/2, -size/2, size, size)
+        self.setBrush(Qt.green)
+        self.setFlag(QGraphicsItem.ItemIsMovable, True)
+        self.setFlag(QGraphicsItem.ItemSendsScenePositionChanges, True)
+        self.setCursor(Qt.SizeAllCursor)
+        self.parent_rect = parent_rect
+        self.viewer = viewer
+        self.position_flag = position_flag  # 'tl', 'tr', 'bl', 'br'
+        self._updating = False
 
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.ItemPositionChange and not self._updating:
+            pos = value
+            rect = self.parent_rect.rect()
+            new_rect = QRectF(rect)
+
+            if self.position_flag == 'tl':
+                new_rect.setTopLeft(pos)
+            elif self.position_flag == 'tr':
+                new_rect.setTopRight(pos)
+            elif self.position_flag == 'bl':
+                new_rect.setBottomLeft(pos)
+            elif self.position_flag == 'br':
+                new_rect.setBottomRight(pos)
+
+            # Ensure width and height are positive
+            if new_rect.width() > 4 and new_rect.height() > 4:
+                self.parent_rect.setRect(new_rect)
+                self._updating = True
+                self.update_handles()
+                self.viewer.update_connection_line(self.parent_rect)
+                self._updating = False
+
+        return super().itemChange(change, value)
+
+    def update_handles(self):
+        rect = self.parent_rect.rect()
+        for handle in self.parent_rect.handles:
+            if handle is self:
+                continue  # не обновляем текущий handle — иначе снова вызовет itemChange()
+            handle.setPos({
+                'tl': rect.topLeft(),
+                'tr': rect.topRight(),
+                'bl': rect.bottomLeft(),
+                'br': rect.bottomRight(),
+            }[handle.position_flag])
 
 
 
@@ -134,7 +185,7 @@ class PDFViewer(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("PDF Viewer and Processor")
+        self.setWindowTitle("PDF Reader")
         self.setGeometry(100, 100, 1600, 900)
 
         self.central_widget = QWidget()
@@ -148,9 +199,27 @@ class PDFViewer(QMainWindow):
         self.main_layout.addLayout(self.left_layout)
 
         # File open button
+        top_layout = QHBoxLayout()
         self.open_button = QPushButton("Open PDF File")
         self.open_button.clicked.connect(self.open_pdf)
-        self.left_layout.addWidget(self.open_button)
+        top_layout.addWidget(self.open_button)
+
+        self.nimike_ja_rev_layout = QHBoxLayout()
+        self.nimike = QLabel("Nimike + Rev:")
+        self.nimike.setMaximumWidth(90)
+        self.input_nimike = QLineEdit()
+        self.input_nimike.setMaximumWidth(200)
+        self.nimike_ja_rev_layout.addWidget(self.nimike)
+        self.nimike_ja_rev_layout.addWidget(self.input_nimike)
+        top_layout.addLayout(self.nimike_ja_rev_layout)
+
+        # CheckBox manual/auto
+        self.checkBox = QCheckBox("Auto")
+        self.checkBox.setChecked(True)
+        self.checkBox.setFixedWidth(60)
+        top_layout.addWidget(self.checkBox)
+
+        self.left_layout.addLayout(top_layout)
 
         # Graphics view for PDF rendering
         self.graphics_view = QGraphicsView()
@@ -181,12 +250,17 @@ class PDFViewer(QMainWindow):
         self.right_layout = QVBoxLayout()
         self.main_layout.addLayout(self.right_layout)
 
+
+
+
         # Special characters buttons
         self.character_buttons_layout = QHBoxLayout()
 
         self.special_characters = ["Ø", "±", "°", "↧", "⊥", "||", "≈", "Ra"]
         total_width = 300
         button_width = total_width//len(self.special_characters) - 5
+
+
 
         for char in self.special_characters:
             button = QPushButton(char)
@@ -222,6 +296,7 @@ class PDFViewer(QMainWindow):
         self.text_blocks_table.cellClicked.connect(self.highlight_selected_block)
 
         # self.text_blocks_table.setSortingEnabled(True)
+
 
         # Buttons
         self.add_row_button = QPushButton("Lisää rivi")
@@ -263,11 +338,13 @@ class PDFViewer(QMainWindow):
         self.measurement_text = [0]
         self.radius = 12
         self.save_path = ""
+        self.basic_file_path = ""
 
         # Install event filter for graphics view
         self.graphics_view.viewport().installEventFilter(self)
 
-
+        # rectangle move
+        self.resizing_handle = None
 
 
     def insert_character(self, char):
@@ -307,15 +384,17 @@ class PDFViewer(QMainWindow):
                     circle_item.setPen(pen)
                     break
 
-
-
     def open_pdf(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Open PDF File", "", "PDF Files (*.pdf)")
-        if file_path:
+        self.input_nimike.setText("")
+        self.basic_file_path = ""
+        self.basic_file_path, _ = QFileDialog.getOpenFileName(self, "Open PDF File", "", "PDF Files (*.pdf)")
+        if self.basic_file_path != "":
 
-            self.pdf_document_name = os.path.splitext(os.path.basename(file_path))[0]
+            self.pdf_document_name = os.path.splitext(os.path.basename(self.basic_file_path))[0]
 
             self.blocks_data.clear()
+
+            self.input_nimike.setText(self.pdf_document_name)
 
             if self.highlights != []:
                 for i in range(len(self.highlights)):
@@ -332,7 +411,7 @@ class PDFViewer(QMainWindow):
 
             self.update_blocks_table()
 
-            self.load_pdf(file_path)
+            self.load_pdf(self.basic_file_path)
 
     def load_pdf(self, file_path):
         self.pdf_document = fitz.open(file_path)
@@ -382,6 +461,11 @@ class PDFViewer(QMainWindow):
             try:
                 if rect_item.scene():
                     self.graphics_scene.removeItem(rect_item)
+                    if hasattr(rect_item, "handles"):
+                        for handle in rect_item.handles:
+                            if handle.scene():
+                                self.graphics_scene.removeItem(handle)
+
                 if circle_item.scene():
                     self.graphics_scene.removeItem(circle_item)
                 if line_item.scene():
@@ -394,13 +478,14 @@ class PDFViewer(QMainWindow):
         self.highlights[self.current_page].clear()
 
         for block in self.blocks_data[self.current_page]:
-            if block["index"] != None:
+            if block["index"] is not None and block["rect"] is not None:
                 if block["page"] == self.current_page:
                     x0, y0, x1, y1 = block["rect"]
 
                     # Draw rectangle around the block
                     rect_item = QGraphicsRectItem(x0, y0, x1 - x0, y1 - y0)
                     rect_item.setPen(Qt.blue)
+                    rect_item.handles = []
                     self.graphics_scene.addItem(rect_item)
 
                     # Use saved circle position if available
@@ -425,11 +510,26 @@ class PDFViewer(QMainWindow):
                     line_item.setPen(Qt.blue)
                     self.graphics_scene.addItem(line_item)
 
+                    for flag in ['tl', 'tr', 'bl', 'br']:
+                        handle = ResizableHandle(rect_item, flag, self)
+                        if flag == 'tl':
+                            handle.setPos(rect_item.rect().topLeft())
+                        elif flag == 'tr':
+                            handle.setPos(rect_item.rect().topRight())
+                        elif flag == 'bl':
+                            handle.setPos(rect_item.rect().bottomLeft())
+                        elif flag == 'br':
+                            handle.setPos(rect_item.rect().bottomRight())
+
+                        rect_item.handles.append(handle)
+                        self.graphics_scene.addItem(handle)
+
                     # Add text inside the circle
                     text_item = self.graphics_scene.addText(str(block["index"]))
                     text_item.setDefaultTextColor(Qt.red)
                     text_item.setFont(QFont("Arial", 10))
-                    text_item.setPos(circle_x - 7, circle_y - 12)
+                    siirto = self.is_one_two_or_three_digit(block["index"])
+                    text_item.setPos(circle_x - siirto, circle_y - 12)
 
                     # Enable moving the circle
                     circle_item.setFlag(QGraphicsEllipseItem.ItemIsMovable, True)
@@ -438,7 +538,13 @@ class PDFViewer(QMainWindow):
 
                     self.highlights[self.current_page].append((rect_item, circle_item, line_item, text_item))
 
-
+    def is_one_two_or_three_digit(self, number):
+        if 0 <= abs(number) <= 9:
+            return 7
+        if 10 <= abs(number) <= 99:
+            return 12
+        if 100 <= abs(number) <= 999:
+            return 17
     def prev_page(self):
         if self.current_page > 0:
             self.current_page -= 1
@@ -485,8 +591,18 @@ class PDFViewer(QMainWindow):
                 self.dragged_circle = (circle_item, line_item, text_item)
                 return True
 
+        # rectangle size scalling
+        for rect_item, _, _, _ in self.highlights[self.current_page]:
+            if hasattr(rect_item, "handles"):
+                for handle in rect_item.handles:
+                    if handle.contains(handle.mapFromScene(view_pos)):
+                        self.resizing_handle = handle
+                        return True
+
         # If not, start a new rectangle selection
         self.selection_start = view_pos
+
+
 
         try:
             if self.rect_item is not None:
@@ -498,10 +614,45 @@ class PDFViewer(QMainWindow):
         return True
 
     def handle_mouse_move(self, event):
+
+        scene_pos = self.graphics_view.mapToScene(event.pos())
+
+        # Масштабирование через ручку
+        if self.resizing_handle:
+            rect_item = self.resizing_handle.parent_rect
+            rect = rect_item.rect()
+
+            new_rect = QRectF(rect)
+
+            if self.resizing_handle.position_flag == 'tl':
+                new_rect.setTopLeft(scene_pos)
+            elif self.resizing_handle.position_flag == 'tr':
+                new_rect.setTopRight(scene_pos)
+            elif self.resizing_handle.position_flag == 'bl':
+                new_rect.setBottomLeft(scene_pos)
+            elif self.resizing_handle.position_flag == 'br':
+                new_rect.setBottomRight(scene_pos)
+
+            # Обновляем прямоугольник, если размер адекватный
+            if new_rect.width() > 4 and new_rect.height() > 4:
+                rect_item.setRect(new_rect)
+
+                # Переместить все ручки
+                for handle in rect_item.handles:
+                    if handle.position_flag == 'tl':
+                        handle.setPos(new_rect.topLeft())
+                    elif handle.position_flag == 'tr':
+                        handle.setPos(new_rect.topRight())
+                    elif handle.position_flag == 'bl':
+                        handle.setPos(new_rect.bottomLeft())
+                    elif handle.position_flag == 'br':
+                        handle.setPos(new_rect.bottomRight())
+
+            return True
+
         if self.dragged_circle:
             # Move the circle and update line and text
             circle_item, line_item, text_item = self.dragged_circle
-            scene_pos = self.graphics_view.mapToScene(event.pos())
 
             # Update circle position
             circle_item.setRect(
@@ -543,8 +694,11 @@ class PDFViewer(QMainWindow):
         return True
 
     def handle_mouse_release(self, event):
+        if self.resizing_handle:
+            self.resizing_handle = None
+            return True
+
         if self.dragged_circle:
-            # Stop dragging the circle
             self.dragged_circle = None
             return True
 
@@ -568,7 +722,8 @@ class PDFViewer(QMainWindow):
 
         # Convert selection rect to PDF coordinates
         page = self.pdf_document.load_page(self.current_page)
-        #print(page)
+
+        # print(page)
         pdf_width, pdf_height = page.rect.width, page.rect.height
         x_scale = pdf_width / self.graphics_scene.sceneRect().width()
         y_scale = pdf_height / self.graphics_scene.sceneRect().height()
@@ -578,20 +733,37 @@ class PDFViewer(QMainWindow):
         x1 = self.selection_rect.right() * x_scale
         y1 = self.selection_rect.bottom() * y_scale
 
-        selected_blocks = page.get_text("blocks")
+        if self.checkBox.isChecked():
 
-        for block in selected_blocks:
-            bx0, by0, bx1, by1, text = block[:5]
-            if x0 <= bx0 <= x1 and y0 <= by0 <= y1:
-                if not any(b["rect"] == (bx0, by0, bx1, by1) and b["page"] == self.current_page for b in self.blocks_data[self.current_page]):
+            selected_blocks = page.get_text("blocks")
 
-                    self.blocks_data[self.current_page].append({
-                        "page": self.current_page,
-                        "rect": (bx0, by0, bx1, by1),
-                        "text": text.replace("\n", " ").strip(),
-                        "index": self.measurement_number_calc(),
-                        "circle_position": None
-                    })
+            for block in selected_blocks:
+                bx0, by0, bx1, by1, text = block[:5]
+                if x0 <= bx0 <= x1 and y0 <= by0 <= y1:
+                    if not any(b["rect"] == (bx0, by0, bx1, by1) and b["page"] == self.current_page for b in
+                               self.blocks_data[self.current_page]):
+                        self.blocks_data[self.current_page].append({
+                            "page": self.current_page,
+                            "rect": (bx0, by0, bx1, by1),
+                            "text": text.replace("\n", " ").strip(),
+                            "index": self.measurement_number_calc(),
+                            "circle_position": None
+                        })
+        else:
+            bx0 = x0
+            by0 = y0
+            bx1 = x1
+            by1 = y1
+            if not any(b["rect"] == (bx0, by0, bx1, by1) and b["page"] == self.current_page for b in
+                       self.blocks_data[self.current_page]):
+                self.blocks_data[self.current_page].append({
+                    "page": self.current_page,
+                    "rect": (bx0, by0, bx1, by1),
+                    "text": "Syötä manuaalisesti",
+                    "index": self.measurement_number_calc(),
+                    "circle_position": None
+                })
+
 
         self.update_blocks_table()
         self.draw_highlights()
@@ -686,6 +858,8 @@ class PDFViewer(QMainWindow):
                         if block["index"] is not None:
                             block["index"] = self.measurement_number_calc()
 
+                self.text_blocks_table.removeRow(current_row)
+
                 self.update_blocks_table()
                 if page_number == self.current_page:
                     self.draw_highlights()
@@ -698,6 +872,10 @@ class PDFViewer(QMainWindow):
                 try:
                     if rect_item.scene():
                         self.graphics_scene.removeItem(rect_item)
+                        if hasattr(rect_item, "handles"):
+                            for handle in rect_item.handles:
+                                if handle.scene():
+                                    self.graphics_scene.removeItem(handle)
                     if circle_item.scene():
                         self.graphics_scene.removeItem(circle_item)
                     if line_item.scene():
@@ -709,9 +887,13 @@ class PDFViewer(QMainWindow):
 
             self.highlights[i].clear()
 
+
+
             self.update_blocks_table()
 
         self.measurement_number = [0]
+        self.text_blocks_table.clear()
+        self.measurement_text = [0]
 
     def print_documents_block(self):
         excel_default_path = "T:\\Yhteiset\\LAATU\\Mittapöytäkirjapohjat\\MPK_POHJA_PYSTY_2022.xlsx"
@@ -727,7 +909,7 @@ class PDFViewer(QMainWindow):
         try:
             # PDF Save Dialog
             self.save_path, _ = QFileDialog.getSaveFileName(
-                self, "Save Highlighted PDF", self.pdf_document_name + "N", "PDF Files (*.pdf)"
+                self, "Tallentaa esitäytetty mpk xls-pdf", self.pdf_document_name + "M", "PDF Files (*.pdf)"
             )
             if not self.save_path:
                 self.progress_window.close()
@@ -735,20 +917,24 @@ class PDFViewer(QMainWindow):
 
             # Extract directory path
             save_dir = os.path.dirname(self.save_path)
+            print(save_dir + " <----- save_dir!")
             new_file_name = os.path.splitext(os.path.basename(self.save_path))[0][:-1]
 
             # Path for Excel
+            self.basic_file_path = os.path.join(os.path.dirname(self.basic_file_path), new_file_name + "N.pdf")
             excel_save_path = os.path.join(save_dir, new_file_name + "M.xlsx")
+            excel_save_path = excel_save_path.replace("\\", "/")
             pdf_m_save_path = os.path.join(save_dir, new_file_name + "M.pdf")
             print("excel_path: " + excel_save_path)
             print("pdf_path: " + pdf_m_save_path)
 
-            self.progress_window.update_progress(20, "Saving PDF...")
+            self.progress_window.update_progress(20, "Saving PDF N...")
 
             self.print_pdf()
 
             self.progress_window.update_progress(40, "Saving Excel...")
             self.print_excel(excel_save_path, excel_path)
+            self.progress_window.update_progress(60, "Saving PDF M...")
             self.print_excel_to_pdf(excel_save_path, pdf_m_save_path)
 
             self.progress_window.update_progress(100, "Finished")
@@ -791,10 +977,13 @@ class PDFViewer(QMainWindow):
                     else:
                         circle_x, circle_y = rect[2] + 20, rect[1] - 10
 
+
+                    #new_lx, new_ly = self.shorten_line_to_circle(circle_x, circle_y, rect[2], rect[1], self.radius)
+
                     # draw line
                     new_page.draw_line(
                         p1=(rect[2], rect[1]),
-                        p2=(self.shorten_line_to_circle(rect[2], rect[1], circle_x, circle_y, self.radius)),
+                        p2=(self.shorten_line_to_circle(circle_x, circle_y, rect[2], rect[1], self.radius)),
                         color=(0, 0, 1),  # blue
                         width=1,
                     )
@@ -807,11 +996,13 @@ class PDFViewer(QMainWindow):
                         width=1
                     )
 
+
                     # draw number inside the circle
+                    siirto = self.is_one_two_or_three_digit(block["index"])
                     new_page.insert_text(
-                        (circle_x - 5, circle_y + 4),
+                        (circle_x - siirto+4, circle_y + 3),
                         str(block["index"]),
-                        fontsize=13,
+                        fontsize=14,
                         color=(1, 0, 0),  # red
                         fontname="helv"
                     )
@@ -819,11 +1010,11 @@ class PDFViewer(QMainWindow):
 
         # Save new PDF
         try:
-            pdf_copy.save(self.save_path)
+            pdf_copy.save(self.basic_file_path)
             pdf_copy.close()
-            print(f"PDF saved successfully to {self.save_path}")
+            print(f"PDF saved successfully to {self.basic_file_path}")
         except Exception as e:
-            print(f"Error saving PDF: {e}")
+            print(f"Error saving PDF: {e}" + self.basic_file_path + " <----- self.basic_file_path")
 
 
     def find_row_with_text(self, workbook, column_index, sheet_name, search_text):
@@ -864,12 +1055,14 @@ class PDFViewer(QMainWindow):
 
         table_height = find_table_height - mitta_solu - 1
 
-        count_of_table = math.ceil(len(self.measurement_number)/table_height)
+        count_of_table = math.ceil(self.text_blocks_table.rowCount()/table_height)
 
         source_range = f"B1:H{find_table_height}"
 
+        print(str(self.text_blocks_table.rowCount()) + " <----- row count" + str(table_height))
+
         #make copies of the table
-        if len(self.measurement_number)>table_height:
+        if self.text_blocks_table.rowCount()>table_height:
             for i in range(count_of_table-1):
                 target_start_cell = f"B{(find_table_height*(i+1))+1}"
                 self.copy_data_within_excel(excel_save_path, source_range, target_start_cell, find_table_height)
@@ -883,11 +1076,15 @@ class PDFViewer(QMainWindow):
             print(f"Error loading sample Excel file: {e}")
             return
 
+        print(excel_save_path)
         workbook = excel.Workbooks.Open(excel_save_path)
-        sheet = workbook.ActiveSheet
+        print(workbook)
+        sheet = workbook.Sheets(workbook.ActiveSheet.Name)
 
         count = 0
         count2 = 0
+
+        sheet.Cells(7, 2).Value = self.input_nimike.text()
 
         # insert data
         try:
@@ -936,6 +1133,38 @@ class PDFViewer(QMainWindow):
 
 
 
+    def update_connection_line(self, rect_item):
+        for item in self.highlights[self.current_page]:
+            if item[0] == rect_item:
+                _, circle_item, line_item, _ = item
+
+                # Новая геометрия прямоугольника
+                rect = rect_item.rect()
+                x0 = rect.left()
+                y0 = rect.top()
+                x1 = rect.right()
+                y1 = rect.bottom()
+
+                # Обновление координат линии
+                circle_rect = circle_item.rect()
+                circle_center_x = circle_rect.center().x()
+                circle_center_y = circle_rect.center().y()
+
+                new_lx, new_ly = self.shorten_line_to_circle(
+                    circle_center_x, circle_center_y, x1, y0, self.radius
+                )
+
+                line_item.setLine(x1, y0, new_lx, new_ly)
+
+                # Обновляем блок в blocks_data
+                index = circle_item.data(0)
+                for block in self.blocks_data[self.current_page]:
+                    if block["index"] == index:
+                        block["rect"] = (x0, y0, x1, y1)
+                        break
+                break
+
+
     def copy_data_within_excel(self, file_path, source_range, target_start_cell, table_height):
         try:
             # Initialize Excel
@@ -962,6 +1191,8 @@ class PDFViewer(QMainWindow):
             target_cell = sheet.Range(target_start_cell)
             target_cell.Select()
             sheet.Paste()
+
+            sheet.Cells(7 + table_height, 2).Value = self.input_nimike.text()
 
             # Save and close the file
             workbook.Save()
@@ -1053,10 +1284,13 @@ class PDFViewer(QMainWindow):
             excel.Visible = False
 
             workbook = excel.Workbooks.Open(excel_workbook_path)
+            print(f"Sheets: {workbook.Sheets.Count}")
+            print(f"ActiveSheet name: {workbook.ActiveSheet.Name}")
             # Устанавливаем активный лист (если это нужно)
-            active_sheet = workbook.ActiveSheet
+            active_sheet = workbook.Sheets(workbook.ActiveSheet.Name)
 
             active_sheet.ResetAllPageBreaks()
+
 
             # Устанавливаем разрывы страниц каждые 64 строки
             row_count = active_sheet.UsedRange.Rows.Count
@@ -1068,26 +1302,30 @@ class PDFViewer(QMainWindow):
             active_sheet.PageSetup.FitToPagesWide = 1
             active_sheet.PageSetup.FitToPagesTall = False  # Не сжимать по высоте
 
+            print(pdf_save_path + " <----- pdf path ennen")
+            pdf_save_path = pdf_save_path.replace("\\", "/")
+            print(pdf_save_path + " <----- pdf path jalkeen")
+            pdf_save_path = pdf_save_path.replace("/", "\\")
+
             # Экспорт в PDF
-            active_sheet.ExportAsFixedFormat(
-                Type=0,  # 0 = PDF
-                Filename=pdf_save_path,
-                Quality=0,  # Стандартное качество
-                IncludeDocProperties=True,
-                IgnorePrintAreas=False,
-                OpenAfterPublish=False
-            )
+            active_sheet.ExportAsFixedFormat(0, str(pdf_save_path))
+
+
             print(f"PDF сохранен по пути: {pdf_save_path}")
-            workbook.Close(SaveChanges=False)
-            excel.Quit()
         except Exception as e:
             print(f"Ошибка при сохранении Excel в PDF: {e}")
+        finally:
             workbook.Close(SaveChanges=False)
             excel.Quit()
+
 
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     viewer = PDFViewer()
     viewer.show()
-    sys.exit(app.exec_())
+    try:
+        sys.exit(app.exec_())
+    except Exception as e:
+        print("Unexpected error occurred:")
+        traceback.print_exc()
