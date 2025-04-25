@@ -4,6 +4,8 @@ import os
 import math
 import traceback
 
+
+
 import openpyxl
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
@@ -19,6 +21,8 @@ from PyQt5.QtGui import QPixmap, QImage, QFont
 from PyQt5.QtCore import Qt, QRectF, QEvent, QPointF
 
 
+
+
 class Instructions(QDialog):
     def __init__(self):
         super().__init__()
@@ -29,11 +33,21 @@ class Instructions(QDialog):
         self.layout = QVBoxLayout()
         self.setLayout(self.layout)
 
-        self.label = QLabel("1 Valitse PDF-tiedosto käsittelyä varten\n\n"
-                            "2 Valitse mitat, jotka haluat lisätä jokaiselle tiedoston sivulle\n\n"
-                            "3 Siirrä ympyröitä PDF:ssä niin, etteivät ne peitä muuta tekstiä\n\n"
-                            "4 Tee muutoksia taulukon tekstiin (muokkaa tekstiä tai \npoista tarpeeton rivi painamalla 'Delete selected block')\n\n"
-                            "5 Luo uusi PDF ja Excel painamalla 'Print documents' -painiketta")
+        self.label = QLabel("1 Valitse PDF, jota haluat muokata, painamalla painiketta Avaa PDF-tiedosto\n\n"
+                            "2 Jos Automaattinen tila (Auto-valintaruutu) on käytössä, valitse alue,\n"
+                            "  jolta haluat tunnistaa mitat. Jos haluat käyttää manuaalitilaa,\n"
+                            "  poista valinta valintaruudusta ja valitse mitat itse.\n"
+                            "  Tällöin tekstiä ei lisätä taulukkoon automaattisesti – muokkaa se itse.\n\n"
+                            "3 Siirrä suorakulmiot ja ympyrät niin, etteivät ne peitä toisiaan tai piirustusta\n\n"
+                            "4 Lisää kommenttirivejä tai poista tarpeettomat rivit\n"
+                            "  painikkeilla Lisää rivi / Poista valittu lohko.\n"
+                            "  Tai tyhjennä koko taulukko painikkeella Tyhjennä kaikki\n\n"
+                            "5 Tarkista nimi ja revisio\n\n"
+                            "6 Paina Tulosta asiakirjat (Print Documents) tulostaaksesi tiedostot.\n"
+                            "  Mallipohjan tulee olla oletuskansiossa – älä koske siihen.\n"
+                            "  Paina Ok ja valitse, mihin tallennat Excel-taulukon ja sen PDF-kopion.\n"
+                            "  PDF-tiedosto uudella piirustuksella tallennetaan pääpiirustuksen\n"
+                            "  viereen, ja sen nimeen lisätään kirjain N loppuun.")
         self.layout.addWidget(self.label)
 
         self.ok_button = QPushButton("Ok")
@@ -200,17 +214,26 @@ class PDFViewer(QMainWindow):
 
         # File open button
         top_layout = QHBoxLayout()
-        self.open_button = QPushButton("Open PDF File")
+        self.open_button = QPushButton("Avaa PDF-tiedosto")
         self.open_button.clicked.connect(self.open_pdf)
         top_layout.addWidget(self.open_button)
 
         self.nimike_ja_rev_layout = QHBoxLayout()
-        self.nimike = QLabel("Nimike + Rev:")
-        self.nimike.setMaximumWidth(90)
+        self.nimike = QLabel("Nimike:")
+        self.nimike.setMaximumWidth(60)
         self.input_nimike = QLineEdit()
-        self.input_nimike.setMaximumWidth(200)
+        self.input_nimike.setMaximumWidth(150)
+
+        self.rev = QLabel("Rev:")
+        self.rev.setMaximumWidth(30)
+        self.input_rev = QLineEdit()
+        self.input_rev.setMaximumWidth(50)
+        self.input_rev.setText("0")
+
         self.nimike_ja_rev_layout.addWidget(self.nimike)
         self.nimike_ja_rev_layout.addWidget(self.input_nimike)
+        self.nimike_ja_rev_layout.addWidget(self.rev)
+        self.nimike_ja_rev_layout.addWidget(self.input_rev)
         top_layout.addLayout(self.nimike_ja_rev_layout)
 
         # CheckBox manual/auto
@@ -228,18 +251,18 @@ class PDFViewer(QMainWindow):
         self.left_layout.addWidget(self.graphics_view)
 
         # Instructions label
-        self.instructions_label = QLabel("Click and drag to select an area.")
+        self.instructions_label = QLabel("Valitse alue napsauttamalla ja vetämällä.")
         self.instructions_label.setAlignment(Qt.AlignCenter)
         self.left_layout.addWidget(self.instructions_label)
 
         # Navigation buttons for pages
         nav_layout = QHBoxLayout()
-        self.prev_button = QPushButton("Previous Page")
+        self.prev_button = QPushButton("Edellinen sivu")
         self.prev_button.clicked.connect(self.prev_page)
         self.prev_button.setEnabled(False)  # Disabled initially
         nav_layout.addWidget(self.prev_button)
 
-        self.next_button = QPushButton("Next Page")
+        self.next_button = QPushButton("Seuraava sivu")
         self.next_button.clicked.connect(self.next_page)
         self.next_button.setEnabled(False)  # Disabled initially
         nav_layout.addWidget(self.next_button)
@@ -280,7 +303,7 @@ class PDFViewer(QMainWindow):
         # Table
         self.text_blocks_table = QTableWidget()
         self.text_blocks_table.setColumnCount(3)
-        self.text_blocks_table.setHorizontalHeaderLabels(["Page", "Index", "Text"])
+        self.text_blocks_table.setHorizontalHeaderLabels(["Sivu", "Index", "Teksti"])
         self.text_blocks_table.verticalHeader().hide()
         self.text_blocks_table.setMaximumWidth(300)
         self.right_layout.addWidget(self.text_blocks_table)
@@ -302,6 +325,7 @@ class PDFViewer(QMainWindow):
         self.add_row_button = QPushButton("Lisää rivi")
         self.add_row_button.clicked.connect(self.add_row_to_table)
         self.add_row_button.setMaximumWidth(300)
+        self.add_row_button.setEnabled(False)
         self.right_layout.addWidget(self.add_row_button)
 
         self.instruction_button = QPushButton("Ohjeet")
@@ -309,17 +333,19 @@ class PDFViewer(QMainWindow):
         self.instruction_button.setMaximumWidth(300)
         self.right_layout.addWidget(self.instruction_button)
 
-        self.delete_button = QPushButton("Delete selected block")
+        self.delete_button = QPushButton("Poista valittu lohko")
         self.delete_button.clicked.connect(self.delete_block)
         self.delete_button.setMaximumWidth(300)
+        self.delete_button.setEnabled(False)
         self.right_layout.addWidget(self.delete_button)
 
-        self.clear_button = QPushButton("Clear all")
+        self.clear_button = QPushButton("Tyhjennä kaikki")
         self.clear_button.clicked.connect(self.clear_all)
         self.clear_button.setMaximumWidth(300)
+        self.clear_button.setEnabled(False)
         self.right_layout.addWidget(self.clear_button)
 
-        self.print_documents_button = QPushButton("Print documents")
+        self.print_documents_button = QPushButton("Tulosta asiakirjat")
         self.print_documents_button.clicked.connect(self.print_documents_block)
         self.print_documents_button.setMaximumWidth(300)
         self.print_documents_button.setEnabled(False)
@@ -400,6 +426,10 @@ class PDFViewer(QMainWindow):
                 for i in range(len(self.highlights)):
                     for rect_item, circle_item, line_item, text_item in self.highlights[i]:
                         self.graphics_scene.removeItem(rect_item)
+                        if hasattr(rect_item, "handles"):
+                            for handle in rect_item.handles:
+                                if handle.scene():
+                                    self.graphics_scene.removeItem(handle)
                         self.graphics_scene.removeItem(circle_item)
                         self.graphics_scene.removeItem(line_item)
                         self.graphics_scene.removeItem(text_item)
@@ -416,6 +446,9 @@ class PDFViewer(QMainWindow):
     def load_pdf(self, file_path):
         self.pdf_document = fitz.open(file_path)
         self.print_documents_button.setEnabled(True)
+        self.add_row_button.setEnabled(True)
+        self.delete_button.setEnabled(True)
+        self.clear_button.setEnabled(True)
 
         # Enable navigation buttons if there are multiple pages
         if len(self.pdf_document) > 1:
@@ -454,7 +487,7 @@ class PDFViewer(QMainWindow):
         # Set scene rect to match the image size
         self.graphics_scene.setSceneRect(QRectF(0, 0, pix.width, pix.height))
 
-        self.instructions_label.setText(f"Page {self.current_page + 1}/{len(self.pdf_document)}. Click and drag to select an area.")
+        self.instructions_label.setText(f"Sivu {self.current_page + 1}/{len(self.pdf_document)}. Valitse alue napsauttamalla ja vetämällä.")
 
     def draw_highlights(self):
         for rect_item, circle_item, line_item, text_item in list(self.highlights[self.current_page]):
@@ -579,6 +612,12 @@ class PDFViewer(QMainWindow):
         return super().eventFilter(source, event)
 
     def handle_mouse_press(self, event):
+        if not hasattr(self, "pdf_document") or self.pdf_document is None:
+            return False
+
+        if not self.highlights or self.current_page >= len(self.highlights):
+            return False
+
         view_pos = self.graphics_view.mapToScene(event.pos())
 
 
@@ -614,6 +653,11 @@ class PDFViewer(QMainWindow):
         return True
 
     def handle_mouse_move(self, event):
+        if not hasattr(self, "pdf_document") or self.pdf_document is None:
+            return False
+
+        if not self.highlights or self.current_page >= len(self.highlights):
+            return False
 
         scene_pos = self.graphics_view.mapToScene(event.pos())
 
@@ -694,6 +738,12 @@ class PDFViewer(QMainWindow):
         return True
 
     def handle_mouse_release(self, event):
+        if not hasattr(self, "pdf_document") or self.pdf_document is None:
+            return False
+
+        if not self.highlights or self.current_page >= len(self.highlights):
+            return False
+
         if self.resizing_handle:
             self.resizing_handle = None
             return True
@@ -830,12 +880,13 @@ class PDFViewer(QMainWindow):
         current_row = self.text_blocks_table.currentRow()
         if current_row >= 0:
             page_number = int(self.text_blocks_table.item(current_row, 0).text()) - 1
-            if not self.text_blocks_table.item(current_row, 1).text().endswith("K"):
-                block_index = int(self.text_blocks_table.item(current_row, 1).text())
-            else:
-                block_index = self.text_blocks_table.item(current_row, 1).text()
+            index_text = self.text_blocks_table.item(current_row, 1).text()
 
-            # print(self.blocks_data)
+
+            try:
+                block_index = int(index_text) if not index_text.endswith("K") else index_text
+            except ValueError:
+                block_index = index_text
 
             if page_number >= 0 and page_number < len(self.blocks_data):
                 block = next(
@@ -848,9 +899,10 @@ class PDFViewer(QMainWindow):
                 if block in self.blocks_data[page_number]:
                     self.blocks_data[page_number].remove(block)
 
-                for i, block in enumerate(self.blocks_data[page_number], start=self.blocks_data[page_number][0]["index"]):
-                    if block["index"] is not None:
-                        block["index"] = i
+                if self.blocks_data[page_number]:
+                    for i, block in enumerate(self.blocks_data[page_number], start=0):
+                        if block.get("index") is not None:
+                            block["index"] = i
 
                 self.measurement_number = [0]
                 for page_blocks in self.blocks_data:
@@ -893,6 +945,7 @@ class PDFViewer(QMainWindow):
 
         self.measurement_number = [0]
         self.text_blocks_table.clear()
+        self.text_blocks_table.setHorizontalHeaderLabels(["Sivu", "Index", "Teksti"])
         self.measurement_text = [0]
 
     def print_documents_block(self):
@@ -942,6 +995,8 @@ class PDFViewer(QMainWindow):
         except Exception as e:
             self.progress_window.label.setText(f"Error: {e}")
             self.progress_window.ok_button.setEnabled(True)
+
+
 
 
     def print_pdf(self):
